@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mark Attendance - Live</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            max-width: 800px;
+        }
+        h2 {
+            color: #333;
+        }
+        #videoContainer {
+            position: relative;
+            width: 640px;
+            max-width: 100%;
+            margin: 20px 0;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        video {
+            width: 100%;
+            display: block;
+        }
+        canvas {
+            display: none;
+        }
+        #status {
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 5px;
+            min-height: 24px;
+        }
+        #status.detecting {
+            background: #e7f3ff;
+            color: #0056b3;
+        }
+        #status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        #status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background: #007BFF;
+            color: white;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        button.stop {
+            background: #dc3545;
+        }
+        button.stop:hover {
+            background: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <p><a href="/">← Back to Home</a></p>
+    <h2>Mark Attendance (Live Detection)</h2>
+
+    <div id="videoContainer">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div>
+        <button id="startBtn">Start Camera</button>
+        <button id="stopBtn" disabled>Stop</button>
+    </div>
+
+    <div id="status"></div>
+
+    <script>
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const startBtn = document.getElementById("startBtn");
+        const stopBtn = document.getElementById("stopBtn");
+        const statusEl = document.getElementById("status");
+
+        let stream = null;
+        let intervalId = null;
+        const SCAN_INTERVAL_MS = 3000;  // Scan every 3 seconds
+
+        function setStatus(text, type = "") {
+            statusEl.textContent = text;
+            statusEl.className = type;
+        }
+
+        async function captureAndSend() {
+            if (!stream || video.readyState < 2) return;
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            canvas.toBlob(async (blob) => {
+                if (!blob) return;
+                setStatus("Scanning...", "detecting");
+                try {
+                    const formData = new FormData();
+                    formData.append("image", blob, "frame.jpg");
+                    const response = await fetch("/attendance", { method: "POST", body: formData });
+                    const result = await response.json();
+                    if (!response.ok) {
+                        setStatus("Error: " + (result.message || response.status), "error");
+                        return;
+                    }
+                    if (result.names && result.names.length > 0) {
+                        const marked = result.marked || result.names;
+                        if (marked.length > 0) {
+                            setStatus("Attendance marked: " + marked.join(", "), "success");
+                        } else {
+                            setStatus("Recognized: " + result.names.join(", ") + " (already marked)", "detecting");
+                        }
+                    } else {
+                        setStatus("No face recognized. Look at the camera.", "detecting");
+                    }
+                } catch (err) {
+                    setStatus("Error: " + err.message, "error");
+                }
+            }, "image/jpeg", 0.85);
+        }
+
+        async function startCamera() {
+            try {
+                setStatus("Starting camera...", "detecting");
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+                video.srcObject = stream;
+                await video.play();
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                setStatus("Live detection running. Face the camera.", "detecting");
+                intervalId = setInterval(captureAndSend, SCAN_INTERVAL_MS);
+                captureAndSend();  // First scan immediately
+            } catch (err) {
+                setStatus("Camera error: " + err.message, "error");
+            }
+        }
+
+        function stopCamera() {
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                stream = null;
+            }
+            video.srcObject = null;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            setStatus("Stopped.");
+        }
+
+        startBtn.onclick = startCamera;
+        stopBtn.onclick = stopCamera;
+    </script>
+</body>
+</html>

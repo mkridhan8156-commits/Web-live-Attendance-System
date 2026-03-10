@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Train Face</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .section {
+            margin: 25px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .section h3 { margin-top: 0; color: #333; }
+        #videoContainer {
+            max-width: 500px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        #video { width: 100%; display: block; }
+        canvas { display: none; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background: #007BFF;
+            color: white;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        input[type="text"] { padding: 8px; margin: 5px 0; width: 200px; }
+    </style>
+</head>
+<body>
+    <p><a href="/">← Back to Home</a></p>
+    <h2>Train New Face</h2>
+
+    <div class="section">
+        <h3>Option 1: Live Camera</h3>
+        <label for="nameLive">Name:</label>
+        <input type="text" id="nameLive" placeholder="Enter student name"><br><br>
+        <div id="videoContainer" style="display:none;">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        <button id="startCamBtn">Start Camera</button>
+        <button id="captureBtn" disabled>Capture & Train</button>
+        <button id="stopCamBtn" disabled>Stop Camera</button>
+    </div>
+
+    <div class="section">
+        <h3>Option 2: Upload Image</h3>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <label for="nameUpload">Name:</label>
+            <input type="text" id="nameUpload" name="name" required><br><br>
+            <label for="image">Image:</label>
+            <input type="file" id="image" name="image" accept="image/*" required><br><br>
+            <button type="submit">Upload & Train</button>
+        </form>
+    </div>
+
+    <div id="response" style="margin-top: 20px; color: green; min-height: 24px;"></div>
+
+    <script>
+        const nameLive = document.getElementById("nameLive");
+        const nameUpload = document.getElementById("nameUpload");
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const videoContainer = document.getElementById("videoContainer");
+        const startCamBtn = document.getElementById("startCamBtn");
+        const captureBtn = document.getElementById("captureBtn");
+        const stopCamBtn = document.getElementById("stopCamBtn");
+        const uploadForm = document.getElementById("uploadForm");
+        const responseEl = document.getElementById("response");
+
+        let stream = null;
+
+        function setResponse(text, isError = false) {
+            responseEl.textContent = text;
+            responseEl.style.color = isError ? "red" : "green";
+        }
+
+        async function trainWithBlob(blob, name) {
+            setResponse("Training...");
+            try {
+                const formData = new FormData();
+                formData.append("name", name);
+                formData.append("image", blob, "capture.jpg");
+                const response = await fetch("/train", { method: "POST", body: formData });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.message || `Server error: ${response.status}`);
+                setResponse(result.message);
+            } catch (err) {
+                setResponse("Error: " + err.message, true);
+            }
+        }
+
+        async function startCamera() {
+            try {
+                setResponse("Starting camera...");
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+                video.srcObject = stream;
+                await video.play();
+                videoContainer.style.display = "block";
+                startCamBtn.disabled = true;
+                captureBtn.disabled = false;
+                stopCamBtn.disabled = false;
+                setResponse("Camera ready. Position your face and click Capture & Train.");
+            } catch (err) {
+                setResponse("Camera error: " + err.message, true);
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                stream = null;
+            }
+            video.srcObject = null;
+            videoContainer.style.display = "none";
+            startCamBtn.disabled = false;
+            captureBtn.disabled = true;
+            stopCamBtn.disabled = true;
+        }
+
+        captureBtn.onclick = () => {
+            const name = nameLive.value.trim();
+            if (!name) {
+                setResponse("Please enter a name.", true);
+                return;
+            }
+            if (!stream || video.readyState < 2) return;
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            canvas.toBlob((blob) => {
+                if (blob) trainWithBlob(blob, name);
+            }, "image/jpeg", 0.9);
+        };
+
+        startCamBtn.onclick = startCamera;
+        stopCamBtn.onclick = stopCamera;
+
+        uploadForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const data = new FormData(uploadForm);
+            setResponse("Training...");
+            try {
+                const response = await fetch("/train", { method: "POST", body: data });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.message || `Server error: ${response.status}`);
+                setResponse(result.message);
+            } catch (err) {
+                setResponse("Error: " + err.message, true);
+            }
+        });
+    </script>
+</body>
+</html>
